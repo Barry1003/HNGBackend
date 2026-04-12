@@ -30,14 +30,7 @@ router.get('/classify', async (req: Request, res: Response) => {
     }
 
     try {
-        const apiKey = process.env.GENDERIZE_API_KEY;
-        let apiUrl = `https://api.genderize.io/?name=${nameKey}`;
-        
-        if (apiKey) {
-            apiUrl += `&apikey=${apiKey}`;
-        }
-
-        const apiResponse = await axios.get(apiUrl) 
+        const apiResponse = await axios.get(`https://api.genderize.io/?name=${nameKey}`) 
         const apiData = apiResponse.data 
         if (apiData.gender === null || apiData.count === 0) {
             return res.status(200).json({
@@ -73,15 +66,13 @@ router.get('/classify', async (req: Request, res: Response) => {
         if (error.response && error.response.status === 429) {
             return res.status(429).json({
                 status: "error",
-                message: "Rate limit exceeded on the external API. Please try again later or use a different name.",
-                debug_info: "The external service (genderize.io) is temporarily blocking requests from Render's IP addresses due to high volume."
+                message: "Rate limit exceeded. Our server is temporarily reaching its limit with the external prediction service. Please try a name you've checked before, or try a new name in a few minutes."
             })
         }
 
         return res.status(502).json({
             status: "error",
-            message: "Upstream or server failure",
-            debug_info: error.message || "Unknown error"
+            message: "Upstream or server failure"
         }) 
     }
 }) 
