@@ -2,6 +2,10 @@ import express, { Request, Response, Router } from 'express'
 import axios from 'axios' 
 
 const router: Router = express.Router() 
+
+// Simple in-memory cache
+const cache: Record<string, any> = {};
+
 router.get('/classify', async (req: Request, res: Response) => {
     const { name } = req.query 
     if (name === undefined || name === null || name === "") {
@@ -16,8 +20,24 @@ router.get('/classify', async (req: Request, res: Response) => {
             message: "name is not a string"
         }) 
     }
+
+    const nameKey = name.toLowerCase().trim();
+
+    // Check cache first
+    if (cache[nameKey]) {
+        console.log(`Cache hit for: ${nameKey}`);
+        return res.status(200).json(cache[nameKey]);
+    }
+
     try {
-        const apiResponse = await axios.get(`https://api.genderize.io/?name=${name}`) 
+        const apiKey = process.env.GENDERIZE_API_KEY;
+        let apiUrl = `https://api.genderize.io/?name=${nameKey}`;
+        
+        if (apiKey) {
+            apiUrl += `&apikey=${apiKey}`;
+        }
+
+        const apiResponse = await axios.get(apiUrl) 
         const apiData = apiResponse.data 
         if (apiData.gender === null || apiData.count === 0) {
             return res.status(200).json({
@@ -31,7 +51,7 @@ router.get('/classify', async (req: Request, res: Response) => {
         const processed_at = new Date().toISOString() 
         res.setHeader('Access-Control-Allow-Origin', '*') 
         
-        return res.status(200).json({
+        const responseData = {
             status: "success",
             data: {
                 name: apiData.name,
@@ -41,10 +61,23 @@ router.get('/classify', async (req: Request, res: Response) => {
                 is_confident,
                 processed_at
             }
-        }) 
+        };
+
+        // Store in cache
+        cache[nameKey] = responseData;
+
+        return res.status(200).json(responseData) 
     } catch (error: any) {
-        console.error("Comparison Error:", error.message || error);
-        // Handling the upstream or server failure
+        console.error("Genderize API Error:", error.message || error);
+        
+        if (error.response && error.response.status === 429) {
+            return res.status(429).json({
+                status: "error",
+                message: "Rate limit exceeded on the external API. Please try again later or use a different name.",
+                debug_info: "The external service (genderize.io) is temporarily blocking requests from Render's IP addresses due to high volume."
+            })
+        }
+
         return res.status(502).json({
             status: "error",
             message: "Upstream or server failure",
