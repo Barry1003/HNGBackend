@@ -43,10 +43,12 @@ router.get('/classify', async (req: Request, res: Response) => {
             }
         }) 
     } catch (error: any) {
-        // Handling theupstream or server failure
+        console.error("Comparison Error:", error.message || error);
+        // Handling the upstream or server failure
         return res.status(502).json({
             status: "error",
-            message: "Upstream or server failure"
+            message: "Upstream or server failure",
+            debug_info: error.message || "Unknown error"
         }) 
     }
 }) 
