@@ -38,11 +38,23 @@ router.post('/profiles', async (req: Request, res: Response) => {
       });
     }
 
-    const [gRes, aRes, nRes] = await Promise.all([
-      axios.get(`https://api.genderize.io?name=${encodeURIComponent(cleanName)}`),
-      axios.get(`https://api.agify.io?name=${encodeURIComponent(cleanName)}`),
-      axios.get(`https://api.nationalize.io?name=${encodeURIComponent(cleanName)}`)
-    ]);
+    let gRes: any, aRes: any, nRes: any;
+
+    try {
+      gRes = await axios.get(`https://api.genderize.io?name=${encodeURIComponent(cleanName)}`);
+    } catch {
+      return res.status(502).json({ status: 'error', message: 'Genderize returned an invalid response' });
+    }
+    try {
+      aRes = await axios.get(`https://api.agify.io?name=${encodeURIComponent(cleanName)}`);
+    } catch {
+      return res.status(502).json({ status: 'error', message: 'Agify returned an invalid response' });
+    }
+    try {
+      nRes = await axios.get(`https://api.nationalize.io?name=${encodeURIComponent(cleanName)}`);
+    } catch {
+      return res.status(502).json({ status: 'error', message: 'Nationalize returned an invalid response' });
+    }
 
     if (!gRes.data.gender || gRes.data.count === 0) {
       return res.status(502).json({ status: 'error', message: 'Genderize returned an invalid response' });
@@ -73,7 +85,13 @@ router.post('/profiles', async (req: Request, res: Response) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, cleanName, nameLower, gender, gender_probability, sample_size, age, age_group, country_id, country_probability, created_at]
     );
-    saveDb();
+
+    try {
+      saveDb();
+    } catch (saveErr: any) {
+      console.error('Failed to save database:', saveErr);
+      return res.status(500).json({ status: 'error', message: 'Failed to persist data' });
+    }
 
     return res.status(201).json({
       status: 'success',
@@ -83,8 +101,9 @@ router.post('/profiles', async (req: Request, res: Response) => {
       }
     });
 
-  } catch (err) {
-    return res.status(502).json({ status: 'error', message: 'Upstream service failed' });
+  } catch (err: any) {
+    console.error('Error in POST /profiles:', err.message || err);
+    return res.status(500).json({ status: 'error', message: 'Internal server error' });
   }
 });
 
