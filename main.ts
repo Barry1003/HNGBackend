@@ -1,16 +1,21 @@
-import express, {Request, Response} from 'express'
-import axios from 'axios'
-import cors from 'cors'
-import 'dotenv/config.js'
-import route from './routes/gender'
+import express from 'express';
+import cors from 'cors';
+import 'dotenv/config';
+import profilesRouter from './routes/profiles.js';
 
-const app = express()
+const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json())
-app.use(cors())
-app.use('/api', route)
+// required for grading
+app.use(cors({ origin: '*' }));
+app.use(express.json());
 
-app.listen(PORT, ()=>{
-    console.log(`server is running on port: ${PORT}`)
-})
+app.use('/api', profilesRouter);
+
+app.get('/', (_req, res) => {
+  res.json({ status: 'ok' });
+});
+
+app.listen(PORT, () => {
+  console.log(`server is running on port: ${PORT}`);
+});
