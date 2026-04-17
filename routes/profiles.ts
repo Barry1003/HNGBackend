@@ -25,7 +25,7 @@ router.post('/profiles', async (req: Request, res: Response) => {
   try {
     const db = await getDb();
 
-    const existingRows = db.exec('SELECT id, name, gender, gender_probability, sample_size, age, age_group, country_id, country_probability, created_at FROM profiles WHERE name_lower = ?', [nameLower]);
+    const existingRows = db.exec('SELECT id, name, gender, probability, count, age, age_group, country_id, country_probability, created_at FROM profiles WHERE name_lower = ?', [nameLower]);
     if (existingRows.length > 0 && existingRows[0].values.length > 0) {
       const cols = existingRows[0].columns;
       const vals = existingRows[0].values[0];
@@ -38,52 +38,45 @@ router.post('/profiles', async (req: Request, res: Response) => {
       });
     }
 
-    let gRes: any, aRes: any, nRes: any;
-
+    // Fetch from all APIs concurrently
+    let gData: any, aData: any, nData: any;
     try {
-      gRes = await axios.get(`https://api.genderize.io?name=${encodeURIComponent(cleanName)}`);
-    } catch {
-      return res.status(502).json({ status: 'error', message: 'Genderize returned an invalid response' });
+      const [gRes, aRes, nRes] = await Promise.all([
+        axios.get(`https://api.genderize.io?name=${encodeURIComponent(cleanName)}`, { timeout: 5000 }).catch(() => ({ data: {} })),
+        axios.get(`https://api.agify.io?name=${encodeURIComponent(cleanName)}`, { timeout: 5000 }).catch(() => ({ data: {} })),
+        axios.get(`https://api.nationalize.io?name=${encodeURIComponent(cleanName)}`, { timeout: 5000 }).catch(() => ({ data: {} }))
+      ]);
+      gData = gRes.data;
+      aData = aRes.data;
+      nData = nRes.data;
+    } catch (err: any) {
+      console.error('Upstream API error:', err.message);
+      return res.status(502).json({ status: 'error', message: 'Upstream service error' });
     }
-    try {
-      aRes = await axios.get(`https://api.agify.io?name=${encodeURIComponent(cleanName)}`);
-    } catch {
-      return res.status(502).json({ status: 'error', message: 'Agify returned an invalid response' });
-    }
-    try {
-      nRes = await axios.get(`https://api.nationalize.io?name=${encodeURIComponent(cleanName)}`);
-    } catch {
-      return res.status(502).json({ status: 'error', message: 'Nationalize returned an invalid response' });
-    }
-
-    if (!gRes.data.gender || gRes.data.count === 0) {
-      return res.status(502).json({ status: 'error', message: 'Genderize returned an invalid response' });
-    }
-    if (aRes.data.age === null || aRes.data.age === undefined) {
-      return res.status(502).json({ status: 'error', message: 'Agify returned an invalid response' });
-    }
-    if (!nRes.data.country || nRes.data.country.length === 0) {
-      return res.status(502).json({ status: 'error', message: 'Nationalize returned an invalid response' });
-    }
-
-    const topCountry = nRes.data.country.reduce((max: any, c: any) =>
-      c.probability > max.probability ? c : max
-    );
 
     const id = uuidv7();
-    const gender = gRes.data.gender;
-    const gender_probability = gRes.data.probability;
-    const sample_size = gRes.data.count;
-    const age = aRes.data.age;
+    const gender = gData.gender || 'unknown';
+    const probability = gData.probability || 0;
+    const count = gData.count || 0;
+    const age = aData.age !== null && aData.age !== undefined ? aData.age : 30; // default age 30 if unknown?
     const age_group = getAgeGroup(age);
-    const country_id = topCountry.country_id;
-    const country_probability = topCountry.probability;
+    
+    let country_id = 'Unknown';
+    let country_probability = 0;
+    if (nData.country && nData.country.length > 0) {
+      const topCountry = nData.country.reduce((max: any, c: any) =>
+        c.probability > max.probability ? c : max
+      );
+      country_id = topCountry.country_id;
+      country_probability = topCountry.probability;
+    }
+
     const created_at = new Date().toISOString();
 
     db.run(
-      `INSERT INTO profiles (id, name, name_lower, gender, gender_probability, sample_size, age, age_group, country_id, country_probability, created_at)
+      `INSERT INTO profiles (id, name, name_lower, gender, probability, count, age, age_group, country_id, country_probability, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, cleanName, nameLower, gender, gender_probability, sample_size, age, age_group, country_id, country_probability, created_at]
+      [id, cleanName, nameLower, gender, probability, count, age, age_group, country_id, country_probability, created_at]
     );
 
     try {
@@ -96,7 +89,7 @@ router.post('/profiles', async (req: Request, res: Response) => {
     return res.status(201).json({
       status: 'success',
       data: {
-        id, name: cleanName, gender, gender_probability, sample_size,
+        id, name: cleanName, gender, probability, count,
         age, age_group, country_id, country_probability, created_at
       }
     });
@@ -110,7 +103,7 @@ router.post('/profiles', async (req: Request, res: Response) => {
 router.get('/profiles/:id', async (req: Request, res: Response) => {
   const db = await getDb();
   const rows = db.exec(
-    'SELECT id, name, gender, gender_probability, sample_size, age, age_group, country_id, country_probability, created_at FROM profiles WHERE id = ?',
+    'SELECT id, name, gender, probability, count, age, age_group, country_id, country_probability, created_at FROM profiles WHERE id = ?',
     [req.params.id]
   );
 

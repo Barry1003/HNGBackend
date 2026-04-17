@@ -85,8 +85,8 @@ function isISO8601UTC(ts: string): boolean {
         assert('201 - id is UUID v7', d.data?.id && isUUIDv7(d.data.id), d.data?.id);
         assert('201 - name matches', d.data?.name?.toLowerCase() === 'james');
         assert('201 - gender present', !!d.data?.gender);
-        assert('201 - gender_probability present', d.data?.gender_probability !== undefined);
-        assert('201 - sample_size present', d.data?.sample_size !== undefined);
+        assert('201 - probability present', d.data?.probability !== undefined);
+        assert('201 - count present', d.data?.count !== undefined);
         assert('201 - age present', d.data?.age !== undefined);
         assert('201 - age_group is valid', ['child', 'teenager', 'adult', 'senior'].includes(d.data?.age_group));
         assert('201 - country_id present', !!d.data?.country_id);
@@ -138,8 +138,8 @@ function isISO8601UTC(ts: string): boolean {
       assert('GET by ID - all fields present', !!(
         data.name &&
         data.gender !== undefined &&
-        data.gender_probability !== undefined &&
-        data.sample_size !== undefined &&
+        data.probability !== undefined &&
+        data.count !== undefined &&
         data.age !== undefined &&
         data.age_group &&
         data.country_id &&
