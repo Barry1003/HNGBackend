@@ -6,6 +6,55 @@ import { getAgeGroup } from '../utils/classify.js';
 
 const router = Router();
 
+router.get('/classify', async (req: Request, res: Response) => {
+  try {
+    const { name } = req.query;
+
+    if (!name || (name as string).trim() === '') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Missing or empty name parameter'
+      });
+    }
+
+    const cleanName = (name as string).trim();
+    const response = await axios.get(`https://api.genderize.io?name=${encodeURIComponent(cleanName)}`);
+    const data = response.data;
+
+    if (!data.gender || data.count === 0) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'No prediction available for the provided name',
+      });
+    }
+
+    const probability = data.probability;
+    const sample_size = data.count;
+    const is_confident = probability >= 0.7 && sample_size >= 100;
+    const processed_at = new Date().toISOString();
+
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        name: data.name,
+        gender: data.gender,
+        probability,
+        sample_size,
+        is_confident,
+        processed_at,
+      }
+    });
+  } catch (err: any) {
+    if (err.response) {
+      return res.status(502).json({ status: 'error', message: 'Upstream service error' });
+    } else if (err.request) {
+      return res.status(502).json({ status: 'error', message: 'Upstream service unavailable' });
+    } else {
+      return res.status(500).json({ status: 'error', message: 'Something went wrong' });
+    }
+  }
+});
+
 router.post('/profiles', async (req: Request, res: Response) => {
   const { name } = req.body;
 
@@ -25,85 +74,83 @@ router.post('/profiles', async (req: Request, res: Response) => {
   try {
     const db = await getDb();
 
-    const existingRows = db.exec('SELECT id, name, gender, probability, count, age, age_group, country_id, country_probability, created_at FROM profiles WHERE name_lower = ?', [nameLower]);
+    const existingRows = db.exec('SELECT id, name, gender, gender_probability, sample_size, age, age_group, country_id, country_probability, created_at FROM profiles WHERE name_lower = ?', [nameLower]);
     if (existingRows.length > 0 && existingRows[0].values.length > 0) {
       const cols = existingRows[0].columns;
       const vals = existingRows[0].values[0];
       const existing: any = {};
       cols.forEach((col: string, i: number) => { existing[col] = vals[i]; });
-      return res.json({
+      return res.status(201).json({
         status: 'success',
         message: 'Profile already exists',
         data: existing
       });
     }
 
-    // Fetch from all APIs concurrently
     let gData: any, aData: any, nData: any;
     try {
       const [gRes, aRes, nRes] = await Promise.all([
-        axios.get(`https://api.genderize.io?name=${encodeURIComponent(cleanName)}`, { timeout: 5000 }).catch(() => ({ data: {} })),
-        axios.get(`https://api.agify.io?name=${encodeURIComponent(cleanName)}`, { timeout: 5000 }).catch(() => ({ data: {} })),
-        axios.get(`https://api.nationalize.io?name=${encodeURIComponent(cleanName)}`, { timeout: 5000 }).catch(() => ({ data: {} }))
+        axios.get(`https://api.genderize.io?name=${encodeURIComponent(cleanName)}`),
+        axios.get(`https://api.agify.io?name=${encodeURIComponent(cleanName)}`),
+        axios.get(`https://api.nationalize.io?name=${encodeURIComponent(cleanName)}`)
       ]);
       gData = gRes.data;
       aData = aRes.data;
       nData = nRes.data;
     } catch (err: any) {
-      console.error('Upstream API error:', err.message);
       return res.status(502).json({ status: 'error', message: 'Upstream service error' });
     }
 
-    const id = uuidv7();
-    const gender = gData.gender || 'unknown';
-    const probability = gData.probability || 0;
-    const count = gData.count || 0;
-    const age = aData.age !== null && aData.age !== undefined ? aData.age : 30; // default age 30 if unknown?
-    const age_group = getAgeGroup(age);
-    
-    let country_id = 'Unknown';
-    let country_probability = 0;
-    if (nData.country && nData.country.length > 0) {
-      const topCountry = nData.country.reduce((max: any, c: any) =>
-        c.probability > max.probability ? c : max
-      );
-      country_id = topCountry.country_id;
-      country_probability = topCountry.probability;
+    if (!gData.gender || gData.count === 0) {
+      return res.status(502).json({ status: 'error', message: 'Genderize returned an invalid response' });
+    }
+    if (aData.age === null || aData.age === undefined) {
+      return res.status(502).json({ status: 'error', message: 'Agify returned an invalid response' });
+    }
+    if (!nData.country || nData.country.length === 0) {
+      return res.status(502).json({ status: 'error', message: 'Nationalize returned an invalid response' });
     }
 
+    const topCountry = nData.country.reduce((max: any, c: any) =>
+      c.probability > max.probability ? c : max
+    );
+
+    const id = uuidv7();
+    const gender = gData.gender;
+    const gender_probability = gData.probability;
+    const sample_size = gData.count;
+    const age = aData.age;
+    const age_group = getAgeGroup(age);
+    const country_id = topCountry.country_id;
+    const country_probability = topCountry.probability;
     const created_at = new Date().toISOString();
 
     db.run(
-      `INSERT INTO profiles (id, name, name_lower, gender, probability, count, age, age_group, country_id, country_probability, created_at)
+      `INSERT INTO profiles (id, name, name_lower, gender, gender_probability, sample_size, age, age_group, country_id, country_probability, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, cleanName, nameLower, gender, probability, count, age, age_group, country_id, country_probability, created_at]
+      [id, cleanName, nameLower, gender, gender_probability, sample_size, age, age_group, country_id, country_probability, created_at]
     );
 
-    try {
-      saveDb();
-    } catch (saveErr: any) {
-      console.error('Failed to save database:', saveErr);
-      return res.status(500).json({ status: 'error', message: 'Failed to persist data' });
-    }
+    saveDb();
 
     return res.status(201).json({
       status: 'success',
       data: {
-        id, name: cleanName, gender, probability, count,
+        id, name: cleanName, gender, gender_probability, sample_size,
         age, age_group, country_id, country_probability, created_at
       }
     });
 
   } catch (err: any) {
     console.error('Error in POST /profiles:', err.message || err);
-    return res.status(500).json({ status: 'error', message: 'Internal server error' });
+    return res.status(500).json({ status: 'error', message: 'Something went wrong' });
   }
 });
 
 router.get('/profiles/:id', async (req: Request, res: Response) => {
   const db = await getDb();
   const rows = db.exec(
-    'SELECT id, name, gender, probability, count, age, age_group, country_id, country_probability, created_at FROM profiles WHERE id = ?',
+    'SELECT id, name, gender, gender_probability, sample_size, age, age_group, country_id, country_probability, created_at FROM profiles WHERE id = ?',
     [req.params.id]
   );
 

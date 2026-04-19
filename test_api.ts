@@ -45,6 +45,28 @@ function isISO8601UTC(ts: string): boolean {
   console.log('==================================================\n');
   console.log(`Using test name: "${TEST_NAME}"\n`);
 
+  // --- GET /api/classify (Classify Name) ---
+  console.log('📋 GET /api/classify (Classify Name)');
+
+  {
+    const res = await req('GET', `${BASE_URL}/classify?name=james`, undefined, 200);
+    if (res) {
+      assert('200 - status is success', res.data.status === 'success');
+      assert('200 - data object exists', !!res.data.data);
+      assert('200 - is_confident present', res.data.data?.is_confident !== undefined);
+      assert('200 - processed_at present', !!res.data.data?.processed_at);
+    }
+  }
+
+  {
+    const res = await req('GET', `${BASE_URL}/classify`, undefined, 400);
+    if (res) {
+      assert('400 on missing name - status', res.data.status === 'error');
+    }
+  }
+
+  console.log('');
+
   // --- POST /api/profiles (Create Profile) ---
   console.log('📋 POST /api/profiles (Create Profile)');
 
@@ -77,34 +99,29 @@ function isISO8601UTC(ts: string): boolean {
   // Test valid profile creation - use "james" which has valid external data
   {
     const res = await req('POST', `${BASE_URL}/profiles`, { name: 'james' });
-    if (res && (res.status === 201 || (res.status === 200 && res.data?.message === 'Profile already exists'))) {
+    if (res && (res.status === 201 || (res.status === 201 && res.data?.message === 'Profile already exists'))) {
       const d = res.data;
-      if (res.status === 201) {
-        assert('201 - status is success', d.status === 'success');
-        assert('201 - data object exists', !!d.data);
-        assert('201 - id is UUID v7', d.data?.id && isUUIDv7(d.data.id), d.data?.id);
-        assert('201 - name matches', d.data?.name?.toLowerCase() === 'james');
-        assert('201 - gender present', !!d.data?.gender);
-        assert('201 - probability present', d.data?.probability !== undefined);
-        assert('201 - count present', d.data?.count !== undefined);
-        assert('201 - age present', d.data?.age !== undefined);
-        assert('201 - age_group is valid', ['child', 'teenager', 'adult', 'senior'].includes(d.data?.age_group));
-        assert('201 - country_id present', !!d.data?.country_id);
-        assert('201 - country_probability present', d.data?.country_probability !== undefined);
-        assert('201 - created_at is ISO 8601 UTC', isISO8601UTC(d.data?.created_at));
-      } else {
-        assert('Profile create returns success (already exists)', d.status === 'success');
-        console.log('  ℹ️  "james" already existed, using existing record');
-      }
+      assert('201 - status is success', d.status === 'success');
+      assert('201 - data object exists', !!d.data);
+      assert('201 - id is UUID v7', d.data?.id && isUUIDv7(d.data.id), d.data?.id);
+      assert('201 - name matches', d.data?.name?.toLowerCase() === 'james');
+      assert('201 - gender present', !!d.data?.gender);
+      assert('201 - gender_probability present', d.data?.gender_probability !== undefined);
+      assert('201 - sample_size present', d.data?.sample_size !== undefined);
+      assert('201 - age present', d.data?.age !== undefined);
+      assert('201 - age_group is valid', ['child', 'teenager', 'adult', 'senior'].includes(d.data?.age_group));
+      assert('201 - country_id present', !!d.data?.country_id);
+      assert('201 - country_probability present', d.data?.country_probability !== undefined);
+      assert('201 - created_at is ISO 8601 UTC', isISO8601UTC(d.data?.created_at));
       createdId = d.data?.id ?? null;
     } else if (res) {
-      assert('Profile create - expected 201 or 200', false, { status: res.status, body: res.data });
+      assert('Profile create - expected 201', false, { status: res.status, body: res.data });
     }
   }
 
   // Test idempotency (same name again)
   {
-    const res = await req('POST', `${BASE_URL}/profiles`, { name: 'james' });
+    const res = await req('POST', `${BASE_URL}/profiles`, { name: 'james' }, 201);
     if (res) {
       assert('Idempotency - status is success', res.data.status === 'success');
       assert('Idempotency - message is "Profile already exists"', res.data.message === 'Profile already exists');
@@ -117,7 +134,7 @@ function isISO8601UTC(ts: string): boolean {
 
   // Test case-insensitivity for idempotency
   {
-    const res = await req('POST', `${BASE_URL}/profiles`, { name: 'JAMES' });
+    const res = await req('POST', `${BASE_URL}/profiles`, { name: 'JAMES' }, 201);
     if (res) {
       assert('Idempotency - case insensitive (JAMES = james)', res.data.status === 'success' && res.data.message === 'Profile already exists');
     }
@@ -138,8 +155,8 @@ function isISO8601UTC(ts: string): boolean {
       assert('GET by ID - all fields present', !!(
         data.name &&
         data.gender !== undefined &&
-        data.probability !== undefined &&
-        data.count !== undefined &&
+        data.gender_probability !== undefined &&
+        data.sample_size !== undefined &&
         data.age !== undefined &&
         data.age_group &&
         data.country_id &&
@@ -147,7 +164,8 @@ function isISO8601UTC(ts: string): boolean {
         data.created_at
       ));
     }
-  } else {
+  }
+ else {
     console.log('  ⚠️  Skipping GET by ID - no ID from create step');
   }
 
